@@ -1,5 +1,7 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
+import { PlayerProvider } from './contexts/PlayerContext';
+import { ToastProvider } from './components/Toast';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
 import { SignUpPage } from './components/auth/SignUpPage';
@@ -14,7 +16,9 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
+        <PlayerProvider>
+          <ToastProvider>
+            <Routes>
           <Route path="/signup" element={<SignUpPage />} />
           <Route path="/login" element={<LoginPage />} />
 
@@ -73,8 +77,22 @@ function App() {
             }
           />
 
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+              <Route
+                path="*"
+                element={
+                  <div className="min-h-screen bg-gray-900 flex items-center justify-center px-4">
+                    <div className="text-center">
+                      <h1 className="text-2xl font-bold text-white mb-2">Page not found</h1>
+                      <Link to="/" className="text-orange-500 hover:text-orange-400">
+                        Back to Home
+                      </Link>
+                    </div>
+                  </div>
+                }
+              />
+            </Routes>
+          </ToastProvider>
+        </PlayerProvider>
       </AuthProvider>
     </BrowserRouter>
   );

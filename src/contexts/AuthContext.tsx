@@ -14,6 +14,8 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  spendCredits: (amount: number) => Promise<boolean>;
+  updateLocalCredits: (newBalance: number) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -24,40 +26,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
+  const fetchProfile = async (userId: string, retryCount = 0): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
 
-    if (data && !error) {
-      setProfile(data);
+      if (data && !error) {
+        setProfile(data);
+        return true;
+      }
+
+      if (error) {
+        console.error('convivo:error: Failed to fetch profile', error);
+        if (retryCount < 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return fetchProfile(userId, retryCount + 1);
+        }
+      }
+      return false;
+    } catch (err) {
+      console.error('convivo:error: Profile fetch exception', err);
+      if (retryCount < 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return fetchProfile(userId, retryCount + 1);
+      }
+      return false;
     }
   };
 
   const createUserProfile = async (userId: string, email: string, role: 'listener' | 'artist') => {
-    const { data, error } = await supabase
-      .from('users')
-      .insert({
-        id: userId,
-        email,
-        role,
-        credits_balance: 10,
-        tier: role === 'artist' ? 'X' : null,
-      })
-      .select()
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          email,
+          role,
+          credits_balance: 0,
+          tier: role === 'artist' ? 'X' : null,
+        })
+        .select()
+        .single();
 
-    if (data && !error) {
-      await supabase.from('credit_transactions').insert({
-        user_id: userId,
-        transaction_type: 'signup-bonus',
-        amount_credits: 10,
-        amount_inr: 0,
-      });
+      if (data && !error) {
+        const { data: initResult, error: initError } = await supabase.rpc('init_user_credits', {
+          p_user_id: userId
+        });
 
-      setProfile(data);
+        if (!initError && initResult) {
+          await supabase.from('credit_transactions').insert({
+            user_id: userId,
+            transaction_type: 'signup-bonus',
+            amount_credits: 100,
+            amount_inr: 0,
+          });
+        }
+
+        await fetchProfile(userId);
+      }
+    } catch (err) {
+      console.error('convivo:error: Failed to create user profile', err);
     }
   };
 
@@ -122,8 +153,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const spendCredits = async (amount: number): Promise<boolean> => {
+    if (!user) {
+      console.error('convivo:error: Cannot spend credits - no user');
+      return false;
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('spend_credit', {
+        p_user_id: user.id,
+        p_amount: amount
+      });
+
+      if (error) {
+        console.error('convivo:error: Credit deduction failed', error);
+        return false;
+      }
+
+      if (data === true) {
+        if (profile) {
+          setProfile({
+            ...profile,
+            credits_balance: profile.credits_balance - amount
+          });
+        }
+        await fetchProfile(user.id);
+        return true;
+      }
+
+      return false;
+    } catch (err) {
+      console.error('convivo:error: Credit spending exception', err);
+      return false;
+    }
+  };
+
+  const updateLocalCredits = (newBalance: number) => {
+    if (profile) {
+      setProfile({
+        ...profile,
+        credits_balance: newBalance
+      });
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signUp, signIn, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, session, loading, signUp, signIn, signOut, refreshProfile, spendCredits, updateLocalCredits }}>
       {children}
     </AuthContext.Provider>
   );

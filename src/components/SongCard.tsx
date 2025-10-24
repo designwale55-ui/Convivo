@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Lock, Play, TrendingUp } from 'lucide-react';
+import { Lock, Play, Pause, Loader2, TrendingUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { usePlayer } from '../contexts/PlayerContext';
+import { useToast } from './Toast';
 import { UnlockModal } from './UnlockModal';
 import type { Database } from '../lib/database.types';
 
@@ -15,7 +17,13 @@ export function SongCard({ song }: SongCardProps) {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [showUnlock, setShowUnlock] = useState(false);
   const [artistName, setArtistName] = useState('');
-  const { user } = useAuth();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const { user, spendCredits, profile } = useAuth();
+  const { currentTrackId, isPlaying, play, pause, isLoading } = usePlayer();
+  const { showToast } = useToast();
+
+  const isCurrentTrack = currentTrackId === song.id;
+  const isThisTrackPlaying = isCurrentTrack && isPlaying;
 
   useEffect(() => {
     if (user) {
@@ -50,15 +58,60 @@ export function SongCard({ song }: SongCardProps) {
     }
   };
 
-  const handleClick = () => {
+  const handlePlayPause = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+
     if (!user) {
       window.location.href = '/login';
       return;
     }
 
-    if (isUnlocked) {
-    } else {
+    if (!isUnlocked) {
       setShowUnlock(true);
+      return;
+    }
+
+    if (isProcessing || isLoading) {
+      return;
+    }
+
+    if (isThisTrackPlaying) {
+      pause();
+      return;
+    }
+
+    if (!song.audio_url) {
+      showToast('Audio file not available', 'error');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      play(song.id, song.audio_url);
+      showToast(`Playing ${song.title}`, 'success');
+    } catch (err) {
+      console.error('convivo:error: Playback failed', err);
+      showToast('Failed to play song', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCardClick = () => {
+    if (!user) {
+      window.location.href = '/login';
+      return;
+    }
+
+    if (!isUnlocked) {
+      setShowUnlock(true);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handlePlayPause(e as any);
     }
   };
 
@@ -72,14 +125,18 @@ export function SongCard({ song }: SongCardProps) {
   return (
     <>
       <div
-        onClick={handleClick}
+        onClick={handleCardClick}
         className="bg-gray-800 rounded-lg overflow-hidden hover:bg-gray-750 transition cursor-pointer group"
+        role="button"
+        tabIndex={0}
+        onKeyPress={handleKeyPress}
+        aria-label={`${song.title} by ${artistName}. ${isUnlocked ? 'Unlocked' : `${song.price_credits} credits to unlock`}`}
       >
         <div className="relative aspect-square">
           {song.cover_thumbnail_url ? (
             <img
               src={song.cover_thumbnail_url}
-              alt={song.title}
+              alt={`${song.title} by ${artistName} cover art`}
               className="w-full h-full object-cover"
             />
           ) : (
@@ -99,12 +156,25 @@ export function SongCard({ song }: SongCardProps) {
 
           {isUnlocked && (
             <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-              <Play className="w-16 h-16 text-white" />
+              <button
+                onClick={handlePlayPause}
+                disabled={isProcessing || isLoading}
+                className="bg-orange-500 hover:bg-orange-600 rounded-full p-4 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label={isThisTrackPlaying ? 'Pause' : 'Play'}
+              >
+                {isProcessing || (isLoading && isCurrentTrack) ? (
+                  <Loader2 className="w-8 h-8 text-white animate-spin" />
+                ) : isThisTrackPlaying ? (
+                  <Pause className="w-8 h-8 text-white" />
+                ) : (
+                  <Play className="w-8 h-8 text-white" />
+                )}
+              </button>
             </div>
           )}
 
-          <div className="absolute top-2 right-2 bg-black bg-opacity-75 px-2 py-1 rounded flex items-center space-x-1">
-            <TrendingUp className="w-3 h-3 text-orange-500" />
+          <div className="absolute top-2 right-2 bg-black bg-opacity-75 px-2 py-1 rounded flex items-center space-x-1" aria-label={`Haven Heat score: ${formatHH(song.haven_heat_score)}`}>
+            <TrendingUp className="w-3 h-3 text-orange-500" aria-hidden="true" />
             <span className="text-white text-xs font-medium">HH: {formatHH(song.haven_heat_score)}</span>
           </div>
         </div>
